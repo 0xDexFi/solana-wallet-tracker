@@ -18,7 +18,7 @@ HELIUS_API_URL = "https://api.helius.xyz/v0"
 
 # Webhook configuration
 WEBHOOK_URL = os.getenv("WEBHOOK_URL", "http://localhost:8000")
-WEBHOOK_PORT = int(os.getenv("WEBHOOK_PORT", "8000"))
+WEBHOOK_PORT = int(os.getenv("PORT", os.getenv("WEBHOOK_PORT", "8000")))
 
 # Database configuration
 DATABASE_PATH = os.getenv("DATABASE_PATH", str(BASE_DIR / "data" / "wallets.db"))
