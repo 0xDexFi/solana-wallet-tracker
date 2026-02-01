@@ -10,7 +10,8 @@
       "Bash(gh repo create:*)",
       "Bash(railway:*)",
       "Bash(curl:*)",
-      "Bash(git push:*)"
+      "Bash(git push:*)",
+      "Bash(python:*)"
     ]
   }
 }

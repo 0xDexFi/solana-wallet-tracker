@@ -8,6 +8,7 @@ from .config import validate_config, WEBHOOK_PORT
 from .database import db
 from .telegram_bot import create_bot_application
 from .webhook_server import app as fastapi_app
+from .helius_client import helius_client
 
 # Configure logging
 logging.basicConfig(
@@ -73,6 +74,13 @@ async def main():
     # Initialize database
     await db.connect()
     logger.info("Database initialized")
+
+    # Sync webhook with all tracked wallets
+    wallets = await db.get_wallets()
+    if wallets:
+        addresses = [w["address"] for w in wallets]
+        await helius_client.add_wallet_to_webhook(addresses[0], addresses)
+        logger.info(f"Synced webhook with {len(addresses)} wallet addresses")
 
     try:
         # Run both services concurrently
