@@ -60,17 +60,21 @@ async def add_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         )
         return
 
-    # Create Helius webhook
-    webhook_id = await helius_client.create_webhook(address)
-    if not webhook_id:
+    # Get all current wallet addresses and add the new one
+    wallets = await db.get_wallets()
+    all_addresses = [w["address"] for w in wallets] + [address]
+
+    # Update the shared webhook with all addresses
+    success = await helius_client.add_wallet_to_webhook(address, all_addresses)
+    if not success:
         await update.message.reply_text(
-            format_error("Failed to create webhook. Please try again later."),
+            format_error("Failed to setup monitoring. Please try again later."),
             parse_mode=ParseMode.MARKDOWN_V2,
         )
         return
 
-    # Add to database
-    success = await db.add_wallet(address, name, webhook_id)
+    # Add to database (no individual webhook ID needed anymore)
+    success = await db.add_wallet(address, name, None)
     if success:
         await update.message.reply_text(
             format_wallet_added(name, address),
@@ -78,8 +82,6 @@ async def add_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         )
         logger.info(f"Added wallet: {name} ({address})")
     else:
-        # Cleanup webhook if database insert failed
-        await helius_client.delete_webhook(webhook_id)
         await update.message.reply_text(
             format_error("Failed to add wallet. Please try again."),
             parse_mode=ParseMode.MARKDOWN_V2,
@@ -106,12 +108,13 @@ async def remove_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         )
         return
 
-    # Delete Helius webhook
-    if wallet.get("helius_webhook_id"):
-        await helius_client.delete_webhook(wallet["helius_webhook_id"])
-
-    # Remove from database
+    # Remove from database first
     await db.remove_wallet(address)
+
+    # Get remaining addresses and update webhook
+    wallets = await db.get_wallets()
+    remaining_addresses = [w["address"] for w in wallets]
+    await helius_client.remove_wallet_from_webhook(remaining_addresses)
 
     await update.message.reply_text(
         format_wallet_removed(wallet["name"], address),

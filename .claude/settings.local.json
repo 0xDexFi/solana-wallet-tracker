@@ -6,7 +6,11 @@
       "Bash(./venv/Scripts/pip.exe install:*)",
       "Bash(git init:*)",
       "Bash(git add:*)",
-      "Bash(git commit:*)"
+      "Bash(git commit:*)",
+      "Bash(gh repo create:*)",
+      "Bash(railway:*)",
+      "Bash(curl:*)",
+      "Bash(git push:*)"
     ]
   }
 }
