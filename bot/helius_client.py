@@ -219,18 +219,23 @@ class HeliusClient:
         async def check_wallet(wallet: dict) -> Optional[TokenBalance]:
             async with semaphore:
                 balances = await self.get_wallet_balances(wallet["address"])
+                logger.info(f"Wallet {wallet['name']} has {len(balances)} tokens")
                 for bal in balances:
-                    if bal["mint"] == token_mint and bal["amount"] > 0:
-                        # Convert raw amount to human-readable
-                        decimals = bal["decimals"]
-                        human_amount = bal["amount"] / (10 ** decimals)
-                        return TokenBalance(
-                            wallet_address=wallet["address"],
-                            wallet_name=wallet["name"],
-                            mint=token_mint,
-                            amount=human_amount,
-                            decimals=decimals,
-                        )
+                    if bal["mint"] == token_mint:
+                        logger.info(f"Found token in {wallet['name']}: amount={bal['amount']}, decimals={bal['decimals']}")
+                        if bal["amount"] > 0:
+                            # Convert raw amount to human-readable
+                            decimals = bal["decimals"]
+                            human_amount = bal["amount"] / (10 ** decimals)
+                            return TokenBalance(
+                                wallet_address=wallet["address"],
+                                wallet_name=wallet["name"],
+                                mint=token_mint,
+                                amount=human_amount,
+                                decimals=decimals,
+                            )
+                        else:
+                            logger.info(f"Wallet {wallet['name']} has 0 balance of this token")
                 return None
 
         # Run all checks in parallel with rate limiting
