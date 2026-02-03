@@ -9,11 +9,15 @@ from .solana_utils import (
     get_token_price,
     calculate_token_amount,
     SOL_MINT,
+    STABLECOINS,
 )
 from .formatters import format_buy_alert, format_sell_alert
 from .telegram_bot import send_alert
 
 logger = logging.getLogger(__name__)
+
+# Minimum USD value to trigger an alert
+MIN_ALERT_VALUE_USD = 100
 
 app = FastAPI(title="Solana Wallet Tracker Webhook Server")
 
@@ -124,6 +128,11 @@ async def process_swap_transaction(tx: dict[str, Any]) -> None:
     if price:
         usd_value = amount * price
 
+    # Skip if below minimum alert threshold
+    if usd_value is None or usd_value < MIN_ALERT_VALUE_USD:
+        logger.debug(f"Skipping alert for {signature}: value ${usd_value or 0:.2f} below ${MIN_ALERT_VALUE_USD} threshold")
+        return
+
     # Record transaction
     await db.add_transaction(
         wallet_address=fee_payer,
@@ -193,6 +202,18 @@ def analyze_swap(
                 "mint": mint,
                 "amount": amount,
             })
+
+    # Skip stablecoin-to-stablecoin swaps (USDC <-> USDT, etc.)
+    sent_mints = {t["mint"] for t in tokens_sent}
+    received_mints = {t["mint"] for t in tokens_received}
+
+    # If all sent tokens are stablecoins AND all received tokens are stablecoins, skip
+    if sent_mints and received_mints:
+        all_sent_stable = all(mint in STABLECOINS for mint in sent_mints)
+        all_received_stable = all(mint in STABLECOINS for mint in received_mints)
+        if all_sent_stable and all_received_stable:
+            logger.debug(f"Skipping stablecoin-to-stablecoin swap")
+            return None
 
     # Check native SOL transfers
     sol_sent = 0
