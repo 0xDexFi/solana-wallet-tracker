@@ -10,7 +10,7 @@ from telegram.constants import ParseMode
 from .config import TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
 from .database import db
 from .helius_client import helius_client
-from .solana_utils import is_valid_solana_address
+from .solana_utils import is_valid_solana_address, get_token_info, get_token_price, format_amount, format_usd
 from .formatters import (
     format_welcome,
     format_wallet_list,
@@ -18,6 +18,7 @@ from .formatters import (
     format_wallet_removed,
     format_wallet_renamed,
     format_error,
+    format_whosinit,
 )
 
 logger = logging.getLogger(__name__)
@@ -170,6 +171,75 @@ async def rename_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         )
 
 
+async def whosinit_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle the /whosinit <token_address> command."""
+    if not context.args:
+        await update.message.reply_text(
+            format_error("Usage: /whosinit <token_address>"),
+            parse_mode=ParseMode.MARKDOWN_V2,
+        )
+        return
+
+    token_address = context.args[0]
+
+    # Validate token address format
+    if not is_valid_solana_address(token_address):
+        await update.message.reply_text(
+            format_error("Invalid token address format."),
+            parse_mode=ParseMode.MARKDOWN_V2,
+        )
+        return
+
+    # Get all tracked wallets
+    wallets = await db.get_wallets()
+    if not wallets:
+        await update.message.reply_text(
+            format_error("No wallets being tracked. Add wallets first with /add"),
+            parse_mode=ParseMode.MARKDOWN_V2,
+        )
+        return
+
+    # Send "searching" message for better UX
+    searching_msg = await update.message.reply_text(
+        f"🔍 Checking {len(wallets)} wallet{'s' if len(wallets) != 1 else ''}\\.\\.\\.",
+        parse_mode=ParseMode.MARKDOWN_V2,
+    )
+
+    # Get token info for display
+    token_info = await get_token_info(token_address)
+    token_symbol = token_info.symbol if token_info else "UNKNOWN"
+
+    # Get token price for USD values
+    token_price = await get_token_price(token_address)
+
+    # Check which wallets hold this token
+    wallet_list = [{"address": w["address"], "name": w["name"]} for w in wallets]
+    holders = await helius_client.get_token_holders(token_address, wallet_list)
+
+    # Format holder data with USD values
+    holder_data = []
+    for h in holders:
+        usd_value = h.amount * token_price if token_price else None
+        holder_data.append({
+            "name": h.wallet_name,
+            "amount": h.amount,
+            "amount_formatted": format_amount(h.amount),
+            "usd_value": usd_value,
+            "usd_formatted": format_usd(usd_value) if usd_value else None,
+        })
+
+    # Delete the searching message
+    await searching_msg.delete()
+
+    # Send results
+    await update.message.reply_text(
+        format_whosinit(token_symbol, token_address, holder_data, len(wallets)),
+        parse_mode=ParseMode.MARKDOWN_V2,
+        disable_web_page_preview=True,
+    )
+    logger.info(f"Whosinit query for {token_symbol}: {len(holders)}/{len(wallets)} wallets holding")
+
+
 def create_bot_application() -> Application:
     """Create and configure the Telegram bot application."""
     application = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
@@ -180,6 +250,7 @@ def create_bot_application() -> Application:
     application.add_handler(CommandHandler("remove", remove_command))
     application.add_handler(CommandHandler("list", list_command))
     application.add_handler(CommandHandler("rename", rename_command))
+    application.add_handler(CommandHandler("whosinit", whosinit_command))
 
     return application
 

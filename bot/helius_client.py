@@ -1,10 +1,25 @@
 import httpx
+import asyncio
 from typing import Optional
+from dataclasses import dataclass
 import logging
 
 from .config import HELIUS_API_KEY, HELIUS_API_URL, WEBHOOK_URL
 
 logger = logging.getLogger(__name__)
+
+# Rate limiting: max concurrent requests to avoid hitting API limits
+MAX_CONCURRENT_REQUESTS = 10
+
+
+@dataclass
+class TokenBalance:
+    """Token balance for a wallet."""
+    wallet_address: str
+    wallet_name: str
+    mint: str
+    amount: float  # Human-readable amount
+    decimals: int
 
 # Store the shared webhook ID
 _shared_webhook_id: Optional[str] = None
@@ -152,6 +167,85 @@ class HeliusClient:
             except Exception as e:
                 logger.error(f"Error updating webhook: {e}")
                 return False
+
+    async def get_wallet_balances(self, wallet_address: str) -> list[dict]:
+        """
+        Get all token balances for a wallet using Helius API.
+        Returns list of {mint, amount, decimals} for each token held.
+        """
+        url = f"{self.base_url}/addresses/{wallet_address}/balances?api-key={self.api_key}"
+
+        async with httpx.AsyncClient() as client:
+            try:
+                response = await client.get(url, timeout=30.0)
+                response.raise_for_status()
+                data = response.json()
+
+                balances = []
+                for token in data.get("tokens", []):
+                    balances.append({
+                        "mint": token.get("mint"),
+                        "amount": token.get("amount", 0),
+                        "decimals": token.get("decimals", 6),
+                    })
+                return balances
+
+            except httpx.HTTPStatusError as e:
+                logger.error(f"Failed to get balances for {wallet_address}: {e.response.status_code}")
+                return []
+            except Exception as e:
+                logger.error(f"Error getting balances for {wallet_address}: {e}")
+                return []
+
+    async def get_token_holders(
+        self,
+        token_mint: str,
+        wallets: list[dict],  # List of {address, name}
+    ) -> list[TokenBalance]:
+        """
+        Check which wallets from the list hold a specific token.
+        Uses parallel requests with rate limiting.
+
+        Args:
+            token_mint: The token mint address to check
+            wallets: List of wallet dicts with 'address' and 'name' keys
+
+        Returns:
+            List of TokenBalance for wallets that hold the token
+        """
+        holders = []
+        semaphore = asyncio.Semaphore(MAX_CONCURRENT_REQUESTS)
+
+        async def check_wallet(wallet: dict) -> Optional[TokenBalance]:
+            async with semaphore:
+                balances = await self.get_wallet_balances(wallet["address"])
+                for bal in balances:
+                    if bal["mint"] == token_mint and bal["amount"] > 0:
+                        # Convert raw amount to human-readable
+                        decimals = bal["decimals"]
+                        human_amount = bal["amount"] / (10 ** decimals)
+                        return TokenBalance(
+                            wallet_address=wallet["address"],
+                            wallet_name=wallet["name"],
+                            mint=token_mint,
+                            amount=human_amount,
+                            decimals=decimals,
+                        )
+                return None
+
+        # Run all checks in parallel with rate limiting
+        tasks = [check_wallet(w) for w in wallets]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        for result in results:
+            if isinstance(result, TokenBalance):
+                holders.append(result)
+            elif isinstance(result, Exception):
+                logger.error(f"Error checking wallet: {result}")
+
+        # Sort by amount descending
+        holders.sort(key=lambda x: x.amount, reverse=True)
+        return holders
 
 
 # Global client instance

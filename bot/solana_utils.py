@@ -4,7 +4,7 @@ from typing import Optional
 from dataclasses import dataclass
 import logging
 
-from .config import JUPITER_API_URL
+# DexScreener API is used for token info and pricing
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +26,7 @@ class TokenInfo:
 
 async def get_token_info(mint_address: str) -> Optional[TokenInfo]:
     """
-    Fetch token metadata from Jupiter API.
+    Fetch token metadata from DexScreener API.
     Results are cached in memory.
     """
     # Check cache first
@@ -44,78 +44,63 @@ async def get_token_info(mint_address: str) -> Optional[TokenInfo]:
         _token_cache[mint_address] = token
         return token
 
-    url = f"{JUPITER_API_URL}/tokens/v1/strict"
+    url = f"https://api.dexscreener.com/latest/dex/tokens/{mint_address}"
 
     async with httpx.AsyncClient() as client:
         try:
             response = await client.get(url, timeout=30.0)
             response.raise_for_status()
-            tokens = response.json()
+            data = response.json()
 
-            # Find the token in the list
-            for token_data in tokens:
-                if token_data.get("address") == mint_address:
+            pairs = data.get("pairs", [])
+            # Find Solana pair
+            solana_pairs = [p for p in pairs if p.get("chainId") == "solana"]
+            if solana_pairs:
+                base_token = solana_pairs[0].get("baseToken", {})
+                if base_token.get("address") == mint_address:
                     token = TokenInfo(
                         address=mint_address,
-                        symbol=token_data.get("symbol", "UNKNOWN"),
-                        name=token_data.get("name", "Unknown Token"),
-                        decimals=token_data.get("decimals", 9),
-                        logo_uri=token_data.get("logoURI"),
+                        symbol=base_token.get("symbol", "UNKNOWN"),
+                        name=base_token.get("name", "Unknown Token"),
+                        decimals=6,  # Default for most SPL tokens
                     )
                     _token_cache[mint_address] = token
                     return token
 
-            # Token not in strict list, try all tokens endpoint
-            return await _get_token_from_all(mint_address)
+            # If not found, return a basic token info
+            return TokenInfo(
+                address=mint_address,
+                symbol="UNKNOWN",
+                name="Unknown Token",
+                decimals=6,
+            )
 
         except Exception as e:
             logger.error(f"Error fetching token info: {e}")
             return None
 
 
-async def _get_token_from_all(mint_address: str) -> Optional[TokenInfo]:
-    """Fetch token info from the all tokens endpoint."""
-    url = f"{JUPITER_API_URL}/tokens/v1/token/{mint_address}"
+async def get_token_price(mint_address: str) -> Optional[float]:
+    """
+    Get token price in USD from DexScreener API.
+    """
+    url = f"https://api.dexscreener.com/latest/dex/tokens/{mint_address}"
 
     async with httpx.AsyncClient() as client:
         try:
             response = await client.get(url, timeout=30.0)
-            if response.status_code == 404:
-                return None
-            response.raise_for_status()
-            token_data = response.json()
-
-            token = TokenInfo(
-                address=mint_address,
-                symbol=token_data.get("symbol", "UNKNOWN"),
-                name=token_data.get("name", "Unknown Token"),
-                decimals=token_data.get("decimals", 9),
-                logo_uri=token_data.get("logoURI"),
-            )
-            _token_cache[mint_address] = token
-            return token
-
-        except Exception as e:
-            logger.error(f"Error fetching token from all endpoint: {e}")
-            return None
-
-
-async def get_token_price(mint_address: str) -> Optional[float]:
-    """
-    Get token price in USD from Jupiter Price API.
-    """
-    url = f"{JUPITER_API_URL}/price/v2"
-    params = {"ids": mint_address}
-
-    async with httpx.AsyncClient() as client:
-        try:
-            response = await client.get(url, params=params, timeout=30.0)
             response.raise_for_status()
             data = response.json()
 
-            price_data = data.get("data", {}).get(mint_address)
-            if price_data:
-                return float(price_data.get("price", 0))
+            pairs = data.get("pairs", [])
+            # Find Solana pair with highest liquidity
+            solana_pairs = [p for p in pairs if p.get("chainId") == "solana"]
+            if solana_pairs:
+                # Sort by liquidity and get the best one
+                solana_pairs.sort(key=lambda x: x.get("liquidity", {}).get("usd", 0), reverse=True)
+                price_str = solana_pairs[0].get("priceUsd")
+                if price_str:
+                    return float(price_str)
             return None
 
         except Exception as e:
@@ -180,3 +165,4 @@ def shorten_address(address: str, chars: int = 4) -> str:
 def calculate_token_amount(raw_amount: int, decimals: int) -> float:
     """Convert raw token amount to human-readable amount."""
     return raw_amount / (10 ** decimals)
+
