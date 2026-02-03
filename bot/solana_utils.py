@@ -11,6 +11,13 @@ logger = logging.getLogger(__name__)
 # SOL mint address
 SOL_MINT = "So11111111111111111111111111111111111111112"
 
+# Stablecoin mint addresses (price = $1.00)
+STABLECOINS = {
+    "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v": "USDC",
+    "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB": "USDT",
+    "USDSwr9ApdHk5bvJKMjzff41FfuX8bSxdKcR81vTwcA": "USDS",
+}
+
 # Common token cache to avoid repeated API calls
 _token_cache: dict[str, "TokenInfo"] = {}
 
@@ -83,7 +90,12 @@ async def get_token_info(mint_address: str) -> Optional[TokenInfo]:
 async def get_token_price(mint_address: str) -> Optional[float]:
     """
     Get token price in USD from DexScreener API.
+    Stablecoins are hardcoded to $1.00.
     """
+    # Stablecoins are always $1.00
+    if mint_address in STABLECOINS:
+        return 1.0
+
     url = f"https://api.dexscreener.com/latest/dex/tokens/{mint_address}"
 
     async with httpx.AsyncClient() as client:
