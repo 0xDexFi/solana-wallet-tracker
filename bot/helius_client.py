@@ -170,24 +170,50 @@ class HeliusClient:
 
     async def get_wallet_balances(self, wallet_address: str) -> list[dict]:
         """
-        Get all token balances for a wallet using Helius API.
+        Get all token balances for a wallet using Helius RPC.
         Returns list of {mint, amount, decimals} for each token held.
         """
-        url = f"{self.base_url}/addresses/{wallet_address}/balances?api-key={self.api_key}"
+        # Use Helius RPC endpoint for more reliable results
+        rpc_url = f"https://mainnet.helius-rpc.com/?api-key={self.api_key}"
+
+        payload = {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "getTokenAccountsByOwner",
+            "params": [
+                wallet_address,
+                {"programId": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"},
+                {"encoding": "jsonParsed"}
+            ]
+        }
 
         async with httpx.AsyncClient() as client:
             try:
-                response = await client.get(url, timeout=30.0)
+                response = await client.post(rpc_url, json=payload, timeout=30.0)
                 response.raise_for_status()
                 data = response.json()
 
+                if "error" in data:
+                    logger.error(f"RPC error for {wallet_address}: {data['error']}")
+                    return []
+
                 balances = []
-                for token in data.get("tokens", []):
-                    balances.append({
-                        "mint": token.get("mint"),
-                        "amount": token.get("amount", 0),
-                        "decimals": token.get("decimals", 6),
-                    })
+                accounts = data.get("result", {}).get("value", [])
+                for account in accounts:
+                    parsed = account.get("account", {}).get("data", {}).get("parsed", {})
+                    info = parsed.get("info", {})
+                    token_amount = info.get("tokenAmount", {})
+
+                    mint = info.get("mint")
+                    amount = int(token_amount.get("amount", "0"))
+                    decimals = token_amount.get("decimals", 6)
+
+                    if mint and amount > 0:
+                        balances.append({
+                            "mint": mint,
+                            "amount": amount,
+                            "decimals": decimals,
+                        })
                 return balances
 
             except httpx.HTTPStatusError as e:
@@ -219,23 +245,20 @@ class HeliusClient:
         async def check_wallet(wallet: dict) -> Optional[TokenBalance]:
             async with semaphore:
                 balances = await self.get_wallet_balances(wallet["address"])
-                logger.info(f"Wallet {wallet['name']} has {len(balances)} tokens")
+                logger.info(f"Wallet {wallet['name']} has {len(balances)} token accounts")
                 for bal in balances:
                     if bal["mint"] == token_mint:
-                        logger.info(f"Found token in {wallet['name']}: amount={bal['amount']}, decimals={bal['decimals']}")
-                        if bal["amount"] > 0:
-                            # Convert raw amount to human-readable
-                            decimals = bal["decimals"]
-                            human_amount = bal["amount"] / (10 ** decimals)
-                            return TokenBalance(
-                                wallet_address=wallet["address"],
-                                wallet_name=wallet["name"],
-                                mint=token_mint,
-                                amount=human_amount,
-                                decimals=decimals,
-                            )
-                        else:
-                            logger.info(f"Wallet {wallet['name']} has 0 balance of this token")
+                        # Convert raw amount to human-readable
+                        decimals = bal["decimals"]
+                        human_amount = bal["amount"] / (10 ** decimals)
+                        logger.info(f"Found token in {wallet['name']}: {human_amount} (raw={bal['amount']})")
+                        return TokenBalance(
+                            wallet_address=wallet["address"],
+                            wallet_name=wallet["name"],
+                            mint=token_mint,
+                            amount=human_amount,
+                            decimals=decimals,
+                        )
                 return None
 
         # Run all checks in parallel with rate limiting
