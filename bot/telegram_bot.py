@@ -24,6 +24,16 @@ from .formatters import (
 logger = logging.getLogger(__name__)
 
 
+async def chatid_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle the /chatid command - shows the current chat's ID."""
+    chat_id = update.effective_chat.id
+    chat_type = update.effective_chat.type
+    await update.message.reply_text(
+        f"Chat ID: `{chat_id}`\nChat type: {chat_type}\n\nUse this ID as your TELEGRAM\\_CHAT\\_ID in \\.env",
+        parse_mode=ParseMode.MARKDOWN_V2,
+    )
+
+
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle the /start command."""
     await update.message.reply_text(
@@ -245,6 +255,7 @@ def create_bot_application() -> Application:
     application = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
 
     # Add command handlers
+    application.add_handler(CommandHandler("chatid", chatid_command))
     application.add_handler(CommandHandler("start", start_command))
     application.add_handler(CommandHandler("add", add_command))
     application.add_handler(CommandHandler("remove", remove_command))
